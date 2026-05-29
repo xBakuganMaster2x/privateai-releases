@@ -1,0 +1,56 @@
+name: Monitor Ollama Models
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check for new Ollama models
+        id: check
+        run: node scripts/check-new-models.js
+
+      - name: Commit updated known-models.json
+        run: |
+          git config user.name "model-monitor-bot"
+          git config user.email "bot@noreply.github.com"
+          git add known-models.json
+          git diff --staged --quiet || (git commit -m "chore: update known-models baseline" && git push)
+
+      - name: Open issue for new models
+        if: steps.check.outputs.new_models != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              "## New models appeared on Ollama library",
+              "",
+              process.env.NEW_MODELS,
+              "",
+              "---",
+              "### What to do",
+              "1. Visit each link above and check the model",
+              "2. Add it to `lib/models.ts` in the app",
+              "3. Build and ship a new installer so users get it in Browse All",
+            ].join("\n");
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "New Ollama models detected — update the catalog",
+              body,
+              labels: ["new-models"],
+            });
+        env:
+          NEW_MODELS: ${{ steps.check.outputs.new_models }}
